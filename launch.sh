@@ -22,7 +22,3 @@ do
 done
 
 ./build/bin/client_jose jose
-
-
-# there is a problem when you run the script multiple times where the port will take some time to be released,
-# not allowing the server to start again for a bit

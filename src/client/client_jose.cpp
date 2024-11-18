@@ -6,6 +6,8 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <queue>
+#include <set>
 using namespace cycles;
 
 
@@ -19,7 +21,7 @@ class BotClient {
     int previousDirection = -1;
     int inertia = 30;
 
-    bool is_valid_move(Direction direction, sf::Vector2i opponentPosition) {
+    bool is_valid_move(Direction direction) {
         // Check that the move does not overlap with any grid cell that is set to
         // not 0
         auto new_pos = my_player.position + getDirectionVector(direction);
@@ -87,7 +89,7 @@ class BotClient {
         for (auto d : {Direction::north, Direction::south, Direction::east, Direction::west}) {
             sf::Vector2i new_pos = my_player.position + getDirectionVector(d);
 
-            if (is_valid_move(d, target)) {
+            if (is_valid_move(d)) {
                 int distance = abs(new_pos.x - target.x) + abs(new_pos.y - target.y);
                 moves.emplace_back(d, distance);
             }
@@ -101,12 +103,88 @@ class BotClient {
         return moves.empty() ? Direction::north : moves[0].first; // Default fallback
     }
 
+    struct Vector2Comparator {
+        bool operator()(const sf::Vector2i& a, const sf::Vector2i& b) const {
+            if (a.x != b.x) {
+                return a.x < b.x; // Compare by x-coordinate first
+            }
+            return a.y < b.y; // Compare by y-coordinate if x is equal
+        }
+    };
+
+    int calculateAccessibleArea(const sf::Vector2i& start) {
+        std::queue<sf::Vector2i> toVisit;
+        std::set<sf::Vector2i, Vector2Comparator> visited; // Use the custom comparator
+        toVisit.push(start);
+        int area = 0;
+
+        // Define the possible moves explicitly
+        std::array<sf::Vector2i, 4> deltas = {
+            sf::Vector2i{0, -1}, // Up
+            sf::Vector2i{0, 1},  // Down
+            sf::Vector2i{-1, 0}, // Left
+            sf::Vector2i{1, 0}   // Right
+        };
+
+        while (!toVisit.empty()) {
+            sf::Vector2i current = toVisit.front();
+            toVisit.pop();
+
+            // Skip if this cell is out of bounds, occupied, or already visited
+            if (visited.count(current) || !state.isInsideGrid(current) || state.getGridCell(current) != 0) {
+                continue;
+            }
+
+            visited.insert(current); // Mark as visited
+            area++;
+
+            // Add neighbors to the queue
+            for (const auto& delta : deltas) {
+                sf::Vector2i neighbor = current + delta;
+                toVisit.push(neighbor);
+            }
+        }
+
+        return area;
+    }
+
+    Direction findSafeDirection() {
+        std::vector<std::pair<Direction, int>> moves;
+
+        // Evaluate each possible direction
+        for (auto dir : {Direction::north, Direction::east, Direction::south, Direction::west}) {
+            if (is_valid_move(dir)) {
+
+                // Calculate the accessible area if moving in this direction
+                auto new_pos = my_player.position + getDirectionVector(dir);
+                int accessibleArea = calculateAccessibleArea(new_pos);
+                moves.emplace_back(dir, accessibleArea);
+            }
+        }
+
+        // Sort moves by accessible area (largest area first)
+        std::sort(moves.begin(), moves.end(), [](const auto& a, const auto& b) {
+            return a.second > b.second;
+        });
+
+        // Return the direction leading to the largest area or a default direction
+        return moves.empty() ? Direction::north : moves[0].first;
+    }
+
     Direction fallBackMove() {
         spdlog::info("{} is making a fallback after getting too close", name);
-        auto dist = std::uniform_int_distribution<int>(0, 3 + static_cast<int>(inertia * 1.0));
-        int proposal = dist(rng);
-        return getDirectionFromValue(proposal > 3 ? previousDirection : proposal);
-    }
+
+        Direction safeDirection = findSafeDirection();
+
+        // If the safe direction is the same as the previous direction, continue
+        if (safeDirection == static_cast<Direction>(previousDirection)) {
+            return safeDirection;
+        }
+
+        // Otherwise, turn to the safe direction
+        previousDirection = static_cast<int>(safeDirection); // Update for future use
+        return safeDirection;
+        }
 
     Direction decideMove() {
         constexpr int max_attempts = 200;
@@ -125,9 +203,9 @@ class BotClient {
         // Find the nearest opponent
         auto [nearestHead, nearestOpponent] = findNearestOpponentHead();
 
-        // If no opponents are alive or reachable, fallback to random survival
+        // If no opponents are alive or reachable, fallback
         if (nearestHead == sf::Vector2i{-1, -1}) {
-            return fallBackMove(); // Random or survival-based fallback
+            return fallBackMove();
         }
 
         // Predict the opponent’s next move
@@ -137,7 +215,7 @@ class BotClient {
         direction = approachTarget(predictedPosition);
 
 
-        while (!is_valid_move(direction, predictedPosition)) {
+        while (!is_valid_move(direction)) {
             if (attempts >= max_attempts) {
                 spdlog::error("{}: Failed to find a valid move after {} attempts", name, max_attempts);
                 exit(1);
