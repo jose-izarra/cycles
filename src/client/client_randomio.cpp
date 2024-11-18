@@ -35,8 +35,7 @@ class BotClient {
     const auto position = my_player.position;
     const int frameNumber = state.frameNumber;
     float inertialDamping = 1.0;
-    auto dist = std::uniform_int_distribution<int>(
-        0, 3 + static_cast<int>(inertia * inertialDamping));
+    auto dist = std::uniform_int_distribution<int>(0, 3 + static_cast<int>(inertia * inertialDamping));
     Direction direction;
     do {
       if (attempts >= max_attempts) {
